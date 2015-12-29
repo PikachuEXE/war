@@ -389,7 +389,7 @@ public class WarEntityListener implements Listener {
 	 *
 	 * @see EntityListener.onEntityRegainHealth()
 	 */
-	@EventHandler
+	@EventHandler(priority = EventPriority.HIGHEST)
 	public void onEntityRegainHealth(final EntityRegainHealthEvent event) {
 		if (!War.war.isLoaded() || 
 				(event.getRegainReason() != RegainReason.REGEN 
@@ -406,6 +406,12 @@ public class WarEntityListener implements Listener {
 		Player player = (Player) entity;
 		Warzone zone = Warzone.getZoneByPlayerName( player.getName() );
 		if (zone != null) {
+
+			if( player.getHealth() == 0 ) {
+                event.setCancelled(true);
+                return;
+            }
+
 			Team team = Team.getTeamByPlayerName(player.getName());
 			if ((event.getRegainReason() == RegainReason.EATING 
 					|| event.getRegainReason() != RegainReason.SATIATED ) 
