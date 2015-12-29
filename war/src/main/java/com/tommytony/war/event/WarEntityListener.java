@@ -306,7 +306,7 @@ public class WarEntityListener implements Listener {
 	 *
 	 * @see EntityListener.onEntityDamage()
 	 */
-	@EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	public void onEntityDamage(final EntityDamageEvent event) {
 
 		
