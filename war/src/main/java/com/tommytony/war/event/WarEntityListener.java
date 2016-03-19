@@ -1,7 +1,9 @@
 package com.tommytony.war.event;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.UUID;
 import java.util.logging.Level;
 
 import org.bukkit.ChatColor;
@@ -29,6 +31,8 @@ import org.bukkit.event.entity.FoodLevelChangeEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.entity.ProjectileLaunchEvent;
+import org.bukkit.event.player.PlayerKickEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.metadata.FixedMetadataValue;
 import org.bukkit.util.Vector;
@@ -50,6 +54,9 @@ import com.tommytony.war.utility.LoadoutSelection;
  * @package com.tommytony.war.event
  */
 public class WarEntityListener implements Listener {
+
+
+	HashMap<UUID, EntityDamageEvent> userDamageTracker = new HashMap<UUID, EntityDamageEvent>();
 
 	/**
 	 * Handles PVP-Damage
@@ -299,7 +306,7 @@ public class WarEntityListener implements Listener {
 	 *
 	 * @see EntityListener.onEntityDamage()
 	 */
-	@EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	public void onEntityDamage(final EntityDamageEvent event) {
 
 		
@@ -338,14 +345,22 @@ public class WarEntityListener implements Listener {
 						return;
 					}
 					
-					// Detect death, prevent it and respawn the player
-					WarPlayerDeathEvent event1 = new WarPlayerDeathEvent(zone, player, null, event.getCause());
-					War.war.getServer().getPluginManager().callEvent(event1);
 					if (!zone.getWarzoneConfig().getBoolean(WarzoneConfig.REALDEATHS)) {
 						// fast respawn, don't really die
 						event.setCancelled(true);
+
+						// Detect death, prevent it and respawn the player
+						WarPlayerDeathEvent event1 = new WarPlayerDeathEvent(zone, player, null, event.getCause());
+						War.war.getServer().getPluginManager().callEvent( event1 );
+
+						// Handle the death.
+						zone.handleNaturalKill(player, event);
+
+					} else {
+						// Add the player to the tracker for the death event.
+						userDamageTracker.put( player.getUniqueId(), event );
+
 					}
-					zone.handleNaturalKill(player, event);
 				}
 			}
 		}
@@ -374,7 +389,7 @@ public class WarEntityListener implements Listener {
 	 *
 	 * @see EntityListener.onEntityRegainHealth()
 	 */
-	@EventHandler
+	@EventHandler(priority = EventPriority.HIGHEST)
 	public void onEntityRegainHealth(final EntityRegainHealthEvent event) {
 		if (!War.war.isLoaded() || 
 				(event.getRegainReason() != RegainReason.REGEN 
@@ -389,8 +404,14 @@ public class WarEntityListener implements Listener {
 		}
 
 		Player player = (Player) entity;
-		Warzone zone = Warzone.getZoneByPlayerName(player.getName());
+		Warzone zone = Warzone.getZoneByPlayerName( player.getName() );
 		if (zone != null) {
+
+			if( player.getHealth() == 0 ) {
+                event.setCancelled(true);
+                return;
+            }
+
 			Team team = Team.getTeamByPlayerName(player.getName());
 			if ((event.getRegainReason() == RegainReason.EATING 
 					|| event.getRegainReason() != RegainReason.SATIATED ) 
@@ -412,7 +433,7 @@ public class WarEntityListener implements Listener {
 		
 		Player player = (Player) event.getEntity();
 		Warzone zone = Warzone.getZoneByPlayerName(player.getName());
-		Team team = Team.getTeamByPlayerName(player.getName());
+		Team team = Team.getTeamByPlayerName( player.getName() );
 		if (zone != null && team.getTeamConfig().resolveBoolean(TeamConfig.NOHUNGER)){
 			event.setCancelled(true);
 		}
@@ -421,7 +442,7 @@ public class WarEntityListener implements Listener {
 	@EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
 	public void onPlayerDeath(final PlayerDeathEvent event) {
 		Player player = event.getEntity();
-		Warzone zone = Warzone.getZoneByPlayerName(player.getName());
+		Warzone zone = Warzone.getZoneByPlayerName( player.getName() );
 		if (zone != null) {
 			event.getDrops().clear();
 			if (!zone.getWarzoneConfig().getBoolean(WarzoneConfig.REALDEATHS)) {
@@ -433,7 +454,22 @@ public class WarEntityListener implements Listener {
 				}
 				War.war.getLogger().log(Level.WARNING, "We missed the death of player {0} - something went wrong.", player.getName());
 			} else {
-				event.setDeathMessage("");
+				event.setDeathMessage(null);
+
+				if( userDamageTracker.containsKey( player.getUniqueId() ) ) {
+					// Broadcast the event when they're actually dead.
+					EntityDamageEvent event1 = userDamageTracker.get( player.getUniqueId() );
+					userDamageTracker.remove( player.getUniqueId() );
+					if( event1 == null ) return;
+
+					// Process the event.
+					War.war.getServer().getPluginManager().callEvent( new WarPlayerDeathEvent(zone, player, null, event1.getCause()) );
+
+					// Handle the death.
+					zone.handleNaturalKill(player, event1);
+
+				}
+
 			}
 		}
 	}
@@ -486,7 +522,7 @@ public class WarEntityListener implements Listener {
 			LivingEntity shooter = event.getEntity().getShooter();
 			if (shooter instanceof Player) {
 				Player player = (Player) shooter;
-				Warzone zone = Warzone.getZoneByPlayerName(player.getName());
+				Warzone zone = Warzone.getZoneByPlayerName( player.getName() );
 				Team team = Team.getTeamByPlayerName(player.getName());
 				if (zone != null) {
 					if (War.war.getKillstreakReward().getAirstrikePlayers().remove(player.getName())) {
@@ -496,6 +532,16 @@ public class WarEntityListener implements Listener {
 				}
 			}
 		}
+	}
+
+	@EventHandler
+	public void onPlayerDisconnect( PlayerQuitEvent e ) {
+		userDamageTracker.remove( e.getPlayer().getUniqueId() );
+	}
+
+	@EventHandler
+	public void onPlayerDisconnect( PlayerKickEvent e ) {
+		userDamageTracker.remove( e.getPlayer().getUniqueId() );
 	}
 
 }
